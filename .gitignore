@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build outputs
+build/
+dist/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.obj
+*.pdb
+*.lib
+*.dll
+*.exe
+*.pyd
+
+# Results / logs
+GUI_result/
+results/
+outputs/
+*.log
+
+# IDE
+.vscode/
+.idea/
