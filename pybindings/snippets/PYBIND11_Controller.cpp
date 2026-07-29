@@ -51,6 +51,7 @@
 pybind11::enum_<ControlMode>(m, "ControlMode")
     .value("LOAD_FOLLOWING", ControlMode::LOAD_FOLLOWING)
     .value("CYCLE_CHARGING", ControlMode::CYCLE_CHARGING)
+    .value("PSIS", ControlMode::PSIS)
     .value("N_CONTROL_MODES", ControlMode::N_CONTROL_MODES);
 
 
@@ -59,6 +60,29 @@ pybind11::class_<Controller>(m, "Controller")
     .def_readwrite("control_string", &Controller::control_string)
     .def_readwrite("firm_dispatch_ratio", &Controller::firm_dispatch_ratio)
     .def_readwrite("load_reserve_ratio", &Controller::load_reserve_ratio)
+    .def_readwrite("psis_diesel_mode", &Controller::psis_diesel_mode)
+    .def_readwrite("psis_diesel_on_soc", &Controller::psis_diesel_on_soc)
+    .def_readwrite("psis_diesel_off_soc", &Controller::psis_diesel_off_soc)
+    .def_readwrite(
+        "psis_wind_shutdown_margin_ratio",
+        &Controller::psis_wind_shutdown_margin_ratio
+    )
+    .def_readwrite(
+        "psis_wind_shutdown_persistence_hrs",
+        &Controller::psis_wind_shutdown_persistence_hrs
+    )
+    .def_readwrite(
+        "psis_diesel_on_time_hrs",
+        &Controller::psis_diesel_on_time_hrs
+    )
+    .def_readwrite(
+        "psis_wind_sufficient_time_hrs",
+        &Controller::psis_wind_sufficient_time_hrs
+    )
+    .def_readwrite(
+        "psis_diesel_mode_vec",
+        &Controller::psis_diesel_mode_vec
+    )
     .def_readwrite("net_load_vec_kW", &Controller::net_load_vec_kW)
     .def_readwrite("missed_load_vec_kW", &Controller::missed_load_vec_kW)
     .def_readwrite(

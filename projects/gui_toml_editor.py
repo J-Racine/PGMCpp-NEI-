@@ -10,8 +10,70 @@ import streamlit as st
 import tomlkit
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_CASE_FILE = SCRIPT_DIR / "GUIbasis.toml"
+# ============================================================
+# Runtime path handling
+# ============================================================
+
+def is_frozen_app():
+    """
+    True when running from the PyInstaller-built PGMCpp_GUI.exe.
+    """
+    return getattr(sys, "frozen", False)
+
+
+def get_runtime_dirs():
+    """
+    Resolve runtime folders for both dev mode and packaged mode.
+
+    Dev mode:
+        C:/PGMcpp_release/projects/gui_toml_editor.py
+        C:/PGMcpp_release/projects/GUIbasis.toml
+        C:/PGMcpp_release/data/...
+        C:/PGMcpp_release/pybindings/...
+
+    Packaged mode:
+        C:/PGMcpp_release/dist/PGMCpp_GUI/PGMCpp_GUI.exe
+        C:/PGMcpp_release/dist/PGMCpp_GUI/projects/GUIbasis.toml
+        C:/PGMcpp_release/dist/PGMCpp_GUI/data/...
+        C:/PGMcpp_release/dist/PGMCpp_GUI/pybindings/...
+
+    Important:
+        Do not use _internal as the editable/user-output location.
+        _internal is only the PyInstaller bundled template area.
+    """
+    if is_frozen_app():
+        root_dir = Path(sys.executable).resolve().parent
+        projects_dir = root_dir / "projects"
+    else:
+        script_dir = Path(__file__).resolve().parent
+
+        if script_dir.name.lower() == "projects":
+            projects_dir = script_dir
+            root_dir = script_dir.parent
+        else:
+            root_dir = script_dir
+            projects_dir = script_dir / "projects" if (script_dir / "projects").exists() else script_dir
+
+    return root_dir.resolve(), projects_dir.resolve()
+
+
+def resolve_case_file(path_like):
+    """
+    Resolve TOML paths relative to the active projects folder.
+    """
+    p = Path(str(path_like)).expanduser()
+
+    if p.is_absolute():
+        return p.resolve()
+
+    return (PROJECTS_DIR / p).resolve()
+
+
+ROOT_DIR, PROJECTS_DIR = get_runtime_dirs()
+SCRIPT_DIR = PROJECTS_DIR
+DATA_DIR = ROOT_DIR / "data"
+PYBINDINGS_DIR = ROOT_DIR / "pybindings"
+DEFAULT_CASE_FILE = PROJECTS_DIR / "GUIbasis.toml"
 
 RESOURCE_TYPES = ["WIND", "SOLAR", "TIDAL", "WAVE", "HYDRO"]
 COST_MODES = ["INTERNAL", "CAD_PER_UNIT", "TOTAL_CAD"]
@@ -118,6 +180,159 @@ def aot_to_df(cfg, key, columns):
         rows.append(row)
 
     return pd.DataFrame(rows, columns=columns)
+
+
+DELETE_ROW_COLUMN = "delete_row"
+
+
+def add_delete_column(df: pd.DataFrame):
+    """
+    Add a GUI-only delete checkbox column.
+    This column is never written back to the TOML file.
+    """
+    df = df.copy()
+
+    if DELETE_ROW_COLUMN not in df.columns:
+        df.insert(0, DELETE_ROW_COLUMN, False)
+
+    return df
+
+
+def remove_deleted_rows(df: pd.DataFrame):
+    """
+    Remove rows where the GUI-only delete checkbox is selected.
+    Keep the original index so hidden TOML fields are still preserved by row index.
+    """
+    if DELETE_ROW_COLUMN not in df.columns:
+        return df
+
+    delete_mask = df[DELETE_ROW_COLUMN].fillna(False).astype(bool)
+    return df.loc[~delete_mask].drop(columns=[DELETE_ROW_COLUMN])
+
+
+def delete_column_config():
+    return st.column_config.CheckboxColumn(
+        "Delete",
+        help="Tick this row to remove it from the TOML when the app reruns or saves.",
+        default=False,
+    )
+
+
+def clean_editor_df(df: pd.DataFrame):
+    """
+    Apply all GUI-only table cleanup before writing the DataFrame back into TOML.
+    """
+    return remove_deleted_rows(df)
+
+
+
+def editor_nonce():
+    """
+    Small counter used in Streamlit widget keys.
+    Bumping it forces data_editor / multiselect widgets to reset after add/delete actions.
+    """
+    return int(st.session_state.get("editor_nonce", 0))
+
+
+def bump_editor_nonce():
+    st.session_state["editor_nonce"] = editor_nonce() + 1
+
+
+def clone_toml_table(source):
+    """Copy one TOML table while preserving its keys and values."""
+    item = tomlkit.table()
+
+    for key, value in source.items():
+        item[key] = value
+
+    return item
+
+
+def delete_aot_rows(cfg, section, row_indices):
+    """
+    Delete selected rows from a TOML array-of-tables section by zero-based row index.
+    The delete happens in memory first. It is written to disk only when Save TOML is clicked.
+    """
+    delete_set = set(int(i) for i in row_indices)
+    original_rows = list(cfg.get(section, []))
+    new_aot = tomlkit.aot()
+
+    for idx, item in enumerate(original_rows):
+        if idx not in delete_set:
+            new_aot.append(clone_toml_table(item))
+
+    cfg[section] = new_aot
+    return cfg
+
+
+def row_delete_label(section, item, index):
+    """Human-readable row label used by the explicit delete selector."""
+    row_num = index + 1
+
+    if section == "renewable_resources":
+        return (
+            f"Row {row_num}: "
+            f"{item.get('type', '')} | "
+            f"{item.get('resource_label', '')} | "
+            f"{item.get('path', '')}"
+        )
+
+    if section == "diesel_generators":
+        return (
+            f"Row {row_num}: "
+            f"{item.get('capacity_kW', '')} kW | "
+            f"fuel {item.get('fuel_cost_CAD_per_L', '')} CAD/L | "
+            f"enabled={item.get('enabled', True)}"
+        )
+
+    if section == "liion_batteries":
+        return (
+            f"Row {row_num}: "
+            f"{item.get('power_capacity_kW', '')} kW / "
+            f"{item.get('energy_capacity_kWh', '')} kWh | "
+            f"enabled={item.get('enabled', True)}"
+        )
+
+    return (
+        f"Row {row_num}: "
+        f"{item.get('capacity_kW', '')} kW | "
+        f"resource={item.get('resource_label', '')} | "
+        f"enabled={item.get('enabled', True)}"
+    )
+
+
+def render_delete_controls(section, title):
+    """
+    Explicit delete UI.
+    This is intentionally separate from the spreadsheet so row deletion is easy to find.
+    """
+    rows = list(cfg.get(section, []))
+
+    if not rows:
+        st.caption("No rows in this section.")
+        return
+
+    nonce = editor_nonce()
+    options = list(range(len(rows)))
+
+    selected = st.multiselect(
+        f"Delete rows from {title}",
+        options=options,
+        format_func=lambda idx: row_delete_label(section, rows[idx], idx),
+        key=f"delete_select_{section}_{nonce}",
+        help="Select rows here only if you want to delete them. Then click the delete button below. Save TOML to persist.",
+    )
+
+    if st.button(
+        f"Delete selected {title.lower()} rows",
+        key=f"delete_button_{section}_{nonce}",
+        disabled=not selected,
+    ):
+        delete_aot_rows(cfg, section, selected)
+        auto_assign_resource_keys(cfg)
+        st.session_state["cfg"] = cfg
+        bump_editor_nonce()
+        st.rerun()
 
 
 def clean_cost_fields(item, is_battery=False):
@@ -480,32 +695,186 @@ def add_row_and_reload(section, defaults):
     append_aot_row(cfg, section, defaults)
     auto_assign_resource_keys(cfg)
     st.session_state["cfg"] = cfg
+    bump_editor_nonce()
     st.rerun()
 
 
-DASHBOARD_URL = "http://127.0.0.1:8051"
+DASHBOARD_PORT = 8051
+DASHBOARD_URL = f"http://127.0.0.1:{DASHBOARD_PORT}"
+
+
+def find_pids_listening_on_port(port: int):
+    """
+    Return Windows process IDs listening on a TCP port.
+
+    Used to kill stale Dash dashboard servers before opening a fresh dashboard.
+    This prevents the browser from connecting to old results.
+    """
+    pids = set()
+
+    if os.name != "nt":
+        return pids
+
+    completed = subprocess.run(
+        ["netstat", "-ano"],
+        text=True,
+        capture_output=True,
+        shell=False,
+    )
+
+    for line in completed.stdout.splitlines():
+        if "LISTENING" not in line.upper():
+            continue
+
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+
+        local_address = parts[1]
+        pid_text = parts[-1]
+
+        # Examples:
+        #   127.0.0.1:8051
+        #   0.0.0.0:8051
+        #   [::]:8051
+        if not local_address.endswith(f":{port}"):
+            continue
+
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+
+        if pid != os.getpid():
+            pids.add(pid)
+
+    return pids
+
+
+def kill_pid_tree(pid: int):
+    """
+    Force-kill one process tree on Windows.
+    Ignore failures because the process may already be gone.
+    """
+    if os.name != "nt":
+        return
+
+    if pid <= 0 or pid == os.getpid():
+        return
+
+    subprocess.run(
+        ["taskkill", "/PID", str(pid), "/F", "/T"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        shell=False,
+    )
+
+
+def kill_existing_dashboard_processes():
+    """
+    Kill stale dashboard instances before starting a new dashboard.
+
+    Critical rule:
+        Kill only the Dash dashboard port 8051.
+        Do NOT kill Streamlit port 8501, or the GUI kills itself.
+    """
+    killed_pids = set()
+
+    old_pid = st.session_state.get("dashboard_pid", None)
+    if old_pid is not None:
+        try:
+            old_pid = int(old_pid)
+            kill_pid_tree(old_pid)
+            killed_pids.add(old_pid)
+        except (TypeError, ValueError):
+            pass
+
+    for pid in find_pids_listening_on_port(DASHBOARD_PORT):
+        kill_pid_tree(pid)
+        killed_pids.add(pid)
+
+    if killed_pids:
+        st.info(
+            "Closed old dashboard process(es): "
+            + ", ".join(str(pid) for pid in sorted(killed_pids))
+        )
+        time.sleep(0.75)
+
+
+def dashboard_command(dashboard_path: Path, case_file: Path):
+    """
+    Build the correct dashboard launch command.
+
+    Dev mode:
+        python dashboard.py GUIbasis.toml
+
+    Packaged mode:
+        PGMCpp_GUI.exe --run-dashboard GUIbasis.toml
+
+    Without --run-dashboard, the launcher opens a new Streamlit GUI tab.
+    """
+    if is_frozen_app():
+        return [
+            sys.executable,
+            "--run-dashboard",
+            str(case_file),
+        ]
+
+    return [
+        sys.executable,
+        str(dashboard_path),
+        str(case_file),
+    ]
+
+
+def pgmcpp_command(runner_path: Path, case_file: Path):
+    """
+    Build the correct PGMCpp run command.
+
+    Dev mode:
+        python full_gui_project.py GUIbasis.toml
+
+    Packaged mode:
+        PGMCpp_GUI.exe --run-pgmcpp GUIbasis.toml
+    """
+    if is_frozen_app():
+        return [
+            sys.executable,
+            "--run-pgmcpp",
+            str(case_file),
+        ]
+
+    return [
+        sys.executable,
+        str(runner_path),
+        str(case_file),
+    ]
 
 
 def launch_dashboard(dashboard_path: Path, case_file: Path):
     """
-    Launch dashboard.py without blocking this GUI, then open the dashboard URL.
+    Launch dashboard.py without blocking this GUI.
 
     The dashboard is given the TOML case file as an argument. The dashboard then
     reads [output].results_name from the TOML file to find the results folder.
-    No stdout/stderr log files are created.
     """
     if not dashboard_path.exists():
         st.warning(f"PGMCpp finished, but dashboard.py was not found: {dashboard_path}")
         return None
 
+    kill_existing_dashboard_processes()
+
     creationflags = 0
     if os.name == "nt":
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+    command = dashboard_command(dashboard_path, case_file)
+    st.code("Dashboard launch command:\n" + " ".join(str(x) for x in command))
+
     with open(os.devnull, "w", encoding="utf-8") as devnull:
         process = subprocess.Popen(
-            [sys.executable, str(dashboard_path), str(case_file)],
-            cwd=str(SCRIPT_DIR),
+            command,
+            cwd=str(PROJECTS_DIR),
             stdout=devnull,
             stderr=devnull,
             text=True,
@@ -514,7 +883,6 @@ def launch_dashboard(dashboard_path: Path, case_file: Path):
 
     st.session_state["dashboard_pid"] = process.pid
 
-    # Give Dash a moment to bind to the port before opening the browser.
     time.sleep(1.0)
     webbrowser.open(DASHBOARD_URL, new=2)
 
@@ -747,8 +1115,12 @@ def default_column_config(columns):
 st.set_page_config(page_title="PGMCpp input GUI", layout="wide")
 st.title("PGMCpp input GUI")
 
+st.caption(f"Runtime root: {ROOT_DIR}")
+st.caption(f"Runtime projects folder: {PROJECTS_DIR}")
+
+
 case_file_text = st.text_input("Case TOML file", value=str(DEFAULT_CASE_FILE))
-case_file = Path(case_file_text).expanduser().resolve()
+case_file = resolve_case_file(case_file_text)
 
 # Keep the editable TOML document in Streamlit session state.
 # This prevents unsaved edits from being lost when buttons trigger reruns.
@@ -766,6 +1138,19 @@ ensure_section(cfg, "paths")
 ensure_section(cfg, "model")
 ensure_section(cfg, "economics")
 ensure_section(cfg, "output")
+
+# The GUI uses row-level remote_cost_factor values only.
+# Remove legacy/global remote_cost_factor to avoid conflicting cost controls.
+if "remote_cost_factor" in cfg["economics"]:
+    del cfg["economics"]["remote_cost_factor"]
+
+# Portable defaults for the clean release folder.
+# Users can still override these in the GUI.
+if not str(cfg["paths"].get("pgmcpp_pybindings", "")).strip():
+    cfg["paths"]["pgmcpp_pybindings"] = "../pybindings"
+
+if not str(cfg["paths"].get("electrical_load_time_series", "")).strip():
+    cfg["paths"]["electrical_load_time_series"] = "../data/test/electrical_load/ie0110_kluane_load_1m.csv"
 
 for section in [
     "renewable_resources",
@@ -838,15 +1223,22 @@ with col2:
 
 st.subheader("Cost assumptions")
 
-cfg["economics"]["remote_cost_factor"] = st.number_input(
-    "Default remote cost factor [-]",
-    value=float(cfg["economics"].get("remote_cost_factor", 1.0)),
-    step=0.01,
-    format="%.4f",
+cfg["economics"]["misc_capital_cost_CAD"] = st.number_input(
+    "Miscellaneous capital cost [CAD]",
+    value=float(cfg["economics"].get("misc_capital_cost_CAD", 0.0)),
+    step=1000.0,
+    format="%.2f",
+    help=(
+        "Raw extra CAPEX saved to [economics].misc_capital_cost_CAD. "
+        "Use this for unmodeled costs such as civil works, controls, freight, contingency, or engineering. "
+        "full_gui_project.py must add this value to reported CAPEX/NPC/LCOE for it to affect final results."
+    ),
 )
 
 st.caption(
-    "All production asset unit costs are CAD/kW. Battery unit costs may be CAD/kWh or CAD/kW."
+    "All production asset unit costs are CAD/kW. Battery unit costs may be CAD/kWh or CAD/kW. "
+    "Remote cost factor is controlled per asset row. "
+    "Miscellaneous capital cost is stored separately under [economics]."
 )
 
 
@@ -854,48 +1246,53 @@ st.caption(
 # Resource files
 # ============================================================
 
-st.header("Resource files")
+with st.expander("Resource files", expanded=True):
+    st.caption(
+        "Rows are added only with the buttons below. "
+        "Rows are deleted only with the delete selector below. "
+        "The table itself is fixed-row to avoid accidental row creation while scrolling."
+    )
 
-st.caption("Rows are added only with the buttons below. The table itself is fixed-row to avoid accidental row creation while scrolling.")
+    resource_button_cols = st.columns(len(RESOURCE_TYPES))
+    for button_col, resource_type in zip(resource_button_cols, RESOURCE_TYPES):
+        with button_col:
+            if st.button(f"Add {resource_type.lower()} resource", key=f"add_resource_{resource_type}"):
+                add_row_and_reload("renewable_resources", resource_defaults(cfg, resource_type))
 
-resource_button_cols = st.columns(len(RESOURCE_TYPES))
-for button_col, resource_type in zip(resource_button_cols, RESOURCE_TYPES):
-    with button_col:
-        if st.button(f"Add {resource_type.lower()} resource", key=f"add_resource_{resource_type}"):
-            add_row_and_reload("renewable_resources", resource_defaults(cfg, resource_type))
+    render_delete_controls("renewable_resources", "resource")
 
-resource_df = aot_to_df(cfg, "renewable_resources", RESOURCE_BASIC)
+    resource_df = aot_to_df(cfg, "renewable_resources", RESOURCE_BASIC)
 
-resource_df = st.data_editor(
-    resource_df,
-    num_rows="fixed",
-    use_container_width=True,
-    key="resource_editor",
-    column_config={
-        **default_column_config(RESOURCE_BASIC),
-        "type": select_col("type", RESOURCE_TYPES),
-    },
-)
+    resource_df = st.data_editor(
+        resource_df,
+        num_rows="fixed",
+        use_container_width=True,
+        key=f"resource_editor_{editor_nonce()}",
+        column_config={
+            **default_column_config(RESOURCE_BASIC),
+            "type": select_col("type", RESOURCE_TYPES),
+        },
+    )
 
-cfg["renewable_resources"] = df_to_aot_preserve(
-    resource_df,
-    cfg.get("renewable_resources", []),
-    RESOURCE_BASIC,
-)
+    cfg["renewable_resources"] = df_to_aot_preserve(
+        resource_df,
+        cfg.get("renewable_resources", []),
+        RESOURCE_BASIC,
+    )
 
-cfg = auto_assign_resource_keys(cfg)
+    cfg = auto_assign_resource_keys(cfg)
 
-with st.expander("Auto-assigned resource keys", expanded=False):
-    key_rows = [
-        {
-            "key": item.get("key"),
-            "type": item.get("type"),
-            "resource_label": item.get("resource_label"),
-            "path": item.get("path"),
-        }
-        for item in cfg.get("renewable_resources", [])
-    ]
-    st.dataframe(pd.DataFrame(key_rows), use_container_width=True, hide_index=True)
+    with st.expander("Auto-assigned resource keys", expanded=False):
+        key_rows = [
+            {
+                "key": item.get("key"),
+                "type": item.get("type"),
+                "resource_label": item.get("resource_label"),
+                "path": item.get("path"),
+            }
+            for item in cfg.get("renewable_resources", [])
+        ]
+        st.dataframe(pd.DataFrame(key_rows), use_container_width=True, hide_index=True)
 
 
 # ============================================================
@@ -912,54 +1309,63 @@ def render_asset_table(
     extra_config=None,
     add_defaults=None,
     add_button_label=None,
+    expanded=False,
 ):
-    st.header(title)
+    with st.expander(title, expanded=expanded):
+        st.caption("Use the delete selector above the table to remove rows. Tables are fixed-row to avoid accidental additions.")
 
-    if add_defaults is not None:
-        button_label = add_button_label or f"Add {title.lower()} row"
-        if st.button(button_label, key=f"add_{section}"):
-            add_row_and_reload(section, add_defaults)
+        if add_defaults is not None:
+            button_label = add_button_label or f"Add {title.lower()} row"
+            if st.button(button_label, key=f"add_{section}"):
+                add_row_and_reload(section, add_defaults)
 
-    df = aot_to_df(cfg, section, columns)
+        render_delete_controls(section, title)
 
-    col_config = default_column_config(columns)
-    col_config["cost_mode"] = select_col("cost_mode", COST_MODES)
+        df = aot_to_df(cfg, section, columns)
 
-    if resource_type is not None:
-        col_config["resource_label"] = select_col(
-            "resource_label",
-            resource_options(cfg, resource_type),
+        col_config = default_column_config(columns)
+
+        if "cost_mode" in columns:
+            col_config["cost_mode"] = select_col("cost_mode", COST_MODES)
+
+        if resource_type is not None:
+            col_config["resource_label"] = select_col(
+                "resource_label",
+                resource_options(cfg, resource_type),
+            )
+
+        if is_battery:
+            col_config["capital_cost_basis"] = select_col(
+                "capital_cost_basis",
+                BATTERY_COST_BASES,
+            )
+
+        if extra_config:
+            col_config.update(extra_config)
+
+        df = st.data_editor(
+            df,
+            num_rows="fixed",
+            use_container_width=True,
+            key=f"{section}_{show_advanced}_{editor_nonce()}",
+            column_config=col_config,
         )
 
-    if is_battery:
-        col_config["capital_cost_basis"] = select_col(
-            "capital_cost_basis",
-            BATTERY_COST_BASES,
+        cfg[section] = df_to_aot_preserve(
+            df,
+            cfg.get(section, []),
+            columns,
+            cost_table=cost_table,
+            is_battery=is_battery,
         )
-
-    if extra_config:
-        col_config.update(extra_config)
-
-    df = st.data_editor(
-        df,
-        num_rows="fixed",
-        use_container_width=True,
-        key=f"{section}_{show_advanced}",
-        column_config=col_config,
-    )
-
-    cfg[section] = df_to_aot_preserve(
-        df,
-        cfg.get(section, []),
-        columns,
-        cost_table=cost_table,
-        is_battery=is_battery,
-    )
 
 
 # ============================================================
 # Generators and assets
 # ============================================================
+
+st.header("Generators and assets")
+expand_asset_sections = st.toggle("Expand all asset sections", value=True)
 
 diesel_columns = DIESEL_BASIC + (DIESEL_ADVANCED if show_advanced else [])
 render_asset_table(
@@ -968,6 +1374,7 @@ render_asset_table(
     diesel_columns,
     add_defaults=diesel_defaults(),
     add_button_label="Add diesel generator",
+    expanded=expand_asset_sections,
 )
 
 wind_columns = PRODUCTION_COST_BASIC + (WIND_ADVANCED if show_advanced else [])
@@ -985,6 +1392,7 @@ render_asset_table(
             ["CUBIC", "EXPONENTIAL", "LOOKUP"],
         )
     },
+    expanded=expand_asset_sections,
 )
 
 solar_columns = PRODUCTION_COST_BASIC + (SOLAR_ADVANCED if show_advanced else [])
@@ -1002,6 +1410,7 @@ render_asset_table(
             ["SIMPLE", "DETAILED"],
         )
     },
+    expanded=expand_asset_sections,
 )
 
 tidal_columns = PRODUCTION_COST_BASIC + (TIDAL_ADVANCED if show_advanced else [])
@@ -1019,6 +1428,7 @@ render_asset_table(
             ["CUBIC", "EXPONENTIAL", "LOOKUP"],
         )
     },
+    expanded=expand_asset_sections,
 )
 
 wave_columns = PRODUCTION_COST_BASIC + (WAVE_ADVANCED if show_advanced else [])
@@ -1036,6 +1446,7 @@ render_asset_table(
             ["GAUSSIAN", "PARABOLOID", "LOOKUP"],
         )
     },
+    expanded=expand_asset_sections,
 )
 
 hydro_columns = PRODUCTION_COST_BASIC + (HYDRO_ADVANCED if show_advanced else [])
@@ -1053,6 +1464,7 @@ render_asset_table(
             ["PELTON", "FRANCIS", "KAPLAN"],
         )
     },
+    expanded=expand_asset_sections,
 )
 
 liion_columns = LIION_BASIC + (LIION_ADVANCED if show_advanced else [])
@@ -1064,6 +1476,7 @@ render_asset_table(
     is_battery=True,
     add_defaults=liion_defaults(),
     add_button_label="Add lithium-ion battery",
+    expanded=expand_asset_sections,
 )
 
 cfg = auto_assign_resource_keys(cfg)
@@ -1083,8 +1496,8 @@ with col1:
         st.success(f"Saved: {case_file}")
 
 with col2:
-    runner_path = SCRIPT_DIR / "full_gui_project.py"
-    dashboard_path = SCRIPT_DIR / "dashboard.py"
+    runner_path = PROJECTS_DIR / "full_gui_project.py"
+    dashboard_path = PROJECTS_DIR / "dashboard.py"
 
     if st.button("Save, run PGMCpp, then open dashboard"):
         save_toml(case_file, cfg)
@@ -1092,9 +1505,12 @@ with col2:
         if not runner_path.exists():
             st.error(f"Could not find runner: {runner_path}")
         else:
+            run_command = pgmcpp_command(runner_path, case_file)
+            st.code("PGMCpp run command:\n" + " ".join(str(x) for x in run_command))
+
             completed = subprocess.run(
-                [sys.executable, str(runner_path), str(case_file)],
-                cwd=str(SCRIPT_DIR),
+                run_command,
+                cwd=str(PROJECTS_DIR),
                 text=True,
                 capture_output=True,
             )
@@ -1116,6 +1532,7 @@ with col3:
     if st.button("Reload from disk"):
         st.session_state.pop("cfg", None)
         st.session_state.pop("active_case_file", None)
+        bump_editor_nonce()
         st.rerun()
 
 st.session_state["cfg"] = cfg

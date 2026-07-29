@@ -1465,6 +1465,15 @@ void Controller :: setControlMode(ControlMode control_mode)
             
             break;
         }
+
+        case (ControlMode :: PSIS): {
+            this->control_string = "PSIS";
+            this->psis_diesel_mode = false;
+            this->psis_diesel_on_time_hrs = 0;
+            this->psis_wind_sufficient_time_hrs = 0;
+
+            break;
+        }
         
         default: {
             std::string error_str = "ERROR:  Controller :: setControlMode():  ";
@@ -1612,6 +1621,11 @@ void Controller :: init(
     this->missed_load_vec_kW.resize(electrical_load_ptr->n_points, 0);
     this->missed_firm_dispatch_vec_kW.resize(electrical_load_ptr->n_points, 0);
     this->missed_spinning_reserve_vec_kW.resize(electrical_load_ptr->n_points, 0);
+    this->psis_diesel_mode_vec.resize(electrical_load_ptr->n_points, false);
+
+    this->psis_diesel_mode = false;
+    this->psis_diesel_on_time_hrs = 0;
+    this->psis_wind_sufficient_time_hrs = 0;
     
     //  2. compute Renewable production
     this->__computeRenewableProduction(
@@ -1710,6 +1724,149 @@ void Controller :: applyDispatchControl(
         if (required_spinning_reserve_kW > load_kW) {
             required_spinning_reserve_kW = load_kW;
         }
+
+        //  3.1. update PSIS supervisory mode before dispatch
+        if (this->control_mode == ControlMode :: PSIS) {
+            double total_storage_charge_kWh = 0;
+            double total_storage_energy_kWh = 0;
+            double total_storage_rated_power_kW = 0;
+            double total_storage_available_power_kW = 0;
+
+            for (
+                size_t asset = 0;
+                asset < storage_ptr_vec_ptr->size();
+                asset++
+            ) {
+                Storage* storage_ptr = storage_ptr_vec_ptr->at(asset);
+
+                total_storage_charge_kWh += storage_ptr->charge_kWh;
+                total_storage_energy_kWh += storage_ptr->energy_capacity_kWh;
+                total_storage_rated_power_kW +=
+                    storage_ptr->power_capacity_kW;
+                total_storage_available_power_kW +=
+                    storage_ptr->getAvailablekW(dt_hrs);
+            }
+
+            double storage_soc = 0;
+
+            if (total_storage_energy_kWh > 0) {
+                storage_soc =
+                    total_storage_charge_kWh / total_storage_energy_kWh;
+            }
+
+            // Keep the installed-power test separate from the instantaneous
+            // energy-availability test. Rated power determines whether the
+            // BESS can ever carry the load. getAvailablekW() determines
+            // whether it can carry the renewable deficit for this complete
+            // timestep without reaching its minimum SOC partway through.
+            bool insufficient_energy =
+                storage_soc <= this->psis_diesel_on_soc;
+
+            bool insufficient_installed_storage_power =
+                total_storage_rated_power_kW < load_kW;
+
+            double required_storage_discharge_kW =
+                load_kW - total_renewable_production_kW;
+
+            if (required_storage_discharge_kW < 0) {
+                required_storage_discharge_kW = 0;
+            }
+
+            bool insufficient_energy_for_timestep =
+                total_storage_available_power_kW + 1e-6 <
+                required_storage_discharge_kW;
+
+            if (not this->psis_diesel_mode) {
+                if (
+                    insufficient_energy or
+                    insufficient_installed_storage_power or
+                    insufficient_energy_for_timestep
+                ) {
+                    this->psis_diesel_mode = true;
+                    this->psis_diesel_on_time_hrs = 0;
+                    this->psis_wind_sufficient_time_hrs = 0;
+                }
+            }
+
+            else {
+                this->psis_diesel_on_time_hrs += dt_hrs;
+
+                bool wind_has_shutdown_headroom =
+                    total_renewable_production_kW >=
+                    (1 + this->psis_wind_shutdown_margin_ratio) * load_kW;
+
+                bool storage_can_cover_load =
+                    total_storage_rated_power_kW >= load_kW;
+
+                if (wind_has_shutdown_headroom and storage_can_cover_load) {
+                    this->psis_wind_sufficient_time_hrs += dt_hrs;
+                }
+
+                else {
+                    this->psis_wind_sufficient_time_hrs = 0;
+                }
+
+                double required_diesel_runtime_hrs = 0;
+                bool all_running_diesels_can_stop = true;
+
+                for (
+                    size_t asset = 0;
+                    asset < combustion_ptr_vec_ptr->size();
+                    asset++
+                ) {
+                    Combustion* combustion_ptr =
+                        combustion_ptr_vec_ptr->at(asset);
+
+                    if (combustion_ptr->type != CombustionType :: DIESEL) {
+                        continue;
+                    }
+
+                    Diesel* diesel_ptr = (Diesel*)combustion_ptr;
+
+                    if (
+                        diesel_ptr->minimum_runtime_hrs >
+                        required_diesel_runtime_hrs
+                    ) {
+                        required_diesel_runtime_hrs =
+                            diesel_ptr->minimum_runtime_hrs;
+                    }
+
+                    if (
+                        diesel_ptr->is_running and
+                        diesel_ptr->time_since_last_start_hrs <
+                        diesel_ptr->minimum_runtime_hrs
+                    ) {
+                        all_running_diesels_can_stop = false;
+                    }
+                }
+
+                bool battery_recovered =
+                    storage_soc >= this->psis_diesel_off_soc;
+
+                bool runtime_satisfied =
+                    this->psis_diesel_on_time_hrs >=
+                    required_diesel_runtime_hrs and
+                    all_running_diesels_can_stop;
+
+                bool wind_persistence_satisfied =
+                    this->psis_wind_sufficient_time_hrs >=
+                    this->psis_wind_shutdown_persistence_hrs;
+
+                if (
+                    battery_recovered and
+                    runtime_satisfied and
+                    wind_persistence_satisfied and
+                    storage_can_cover_load
+                ) {
+                    this->psis_diesel_mode = false;
+                    this->psis_diesel_on_time_hrs = 0;
+                    this->psis_wind_sufficient_time_hrs = 0;
+                }
+            }
+
+            this->psis_diesel_mode_vec[timestep] =
+                this->psis_diesel_mode;
+        }
         
         //  4. init load structure
         load_struct.load_kW = load_kW;
@@ -1728,13 +1885,19 @@ void Controller :: applyDispatchControl(
             resources_ptr
         );
         
-        //  6. handle Storage discharge
-        load_struct = this->__handleStorageDischarging(
-            timestep,
-            dt_hrs,
-            load_struct,
-            storage_ptr_vec_ptr
-        );
+        //  6. handle Storage discharge. In PSIS diesel-on mode, storage
+        //     remains grid-following and is not permitted to discharge.
+        if (
+            this->control_mode != ControlMode :: PSIS or
+            not this->psis_diesel_mode
+        ) {
+            load_struct = this->__handleStorageDischarging(
+                timestep,
+                dt_hrs,
+                load_struct,
+                storage_ptr_vec_ptr
+            );
+        }
         
         //  7. handle Combustion dispatch
         switch(this->control_mode) {
@@ -1772,6 +1935,41 @@ void Controller :: applyDispatchControl(
                     is_cycle_charging
                 );
                 
+                break;
+            }
+
+            case (ControlMode :: PSIS): {
+                if (this->psis_diesel_mode) {
+                    // During diesel-on operation the diesel plant serves the
+                    // load. Renewable production is dispatched afterwards,
+                    // so its surplus is available for BESS charging.
+                    LoadStruct diesel_load_struct = load_struct;
+                    diesel_load_struct.total_renewable_production_kW = 0;
+
+                    load_struct = this->__handleCombustionDispatch(
+                        timestep,
+                        dt_hrs,
+                        diesel_load_struct,
+                        combustion_ptr_vec_ptr,
+                        false
+                    );
+                }
+
+                else {
+                    // Commit zero production so Diesel start/stop state and
+                    // time-series outputs remain synchronized while the
+                    // supervisory controller commands diesel-off operation.
+                    LoadStruct combustion_off_struct;
+
+                    this->__handleCombustionDispatch(
+                        timestep,
+                        dt_hrs,
+                        combustion_off_struct,
+                        combustion_ptr_vec_ptr,
+                        false
+                    );
+                }
+
                 break;
             }
             
@@ -2038,7 +2236,12 @@ void Controller :: clear(void)
     this->missed_load_vec_kW.clear();
     this->missed_firm_dispatch_vec_kW.clear();
     this->missed_spinning_reserve_vec_kW.clear();
+    this->psis_diesel_mode_vec.clear();
     this->combustion_map.clear();
+
+    this->psis_diesel_mode = false;
+    this->psis_diesel_on_time_hrs = 0;
+    this->psis_wind_sufficient_time_hrs = 0;
     
     return;
 }   /* clear() */

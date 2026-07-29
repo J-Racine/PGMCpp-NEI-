@@ -7,7 +7,7 @@ Main fixes relative to the original:
 3. Uses full-resolution plotting so hourly wind spikes are preserved.
 4. Adds a visible dashboard version stamp to verify the edited file is running.
 5. Runs on a fixed non-debug port to avoid stale Dash reloader processes.
-6. Reads the results folder only from [output].results_name in a TOML case file.
+6. Opens a completed PGMcpp results folder directly; no TOML file is required.
 """
 
 # ============================================================
@@ -26,18 +26,15 @@ from dash.dependencies import Input, Output
 import plotly.express as px
 import plotly.graph_objects as go
 
-try:
-    import tomllib  # Python 3.11+
-except ModuleNotFoundError:
-    import tomli as tomllib  # pip install tomli
-
-
 # ============================================================
-# User inputs / TOML path handling
+# User inputs / direct results folder handling
 # ============================================================
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_CASE_FILE = SCRIPT_DIR / "GUIbasis.toml"
+
+DEFAULT_RESULTS_FOLDER = Path(
+    r"C:\Users\jracine\Desktop\PGMcpp_NEI_version\projects\results\paulatuk_single_case\growth_08_PATH_02"
+)
 
 start_year = 2026
 
@@ -45,108 +42,58 @@ start_year = 2026
 MAX_PLOT_POINTS = None
 
 
-def load_results_folder_from_toml(case_file):
+def validate_results_folder(results_folder):
     """
-    Read the GUI TOML and return the PGMcpp results folder.
+    Use a completed PGMcpp results folder directly.
 
-    This dashboard intentionally reads ONE field only:
-
-        [output]
-        results_name = "GUI_result"
-
-    The results folder is assumed to be beside the TOML file:
-
-        <folder containing GUIbasis.toml>/GUI_result
-
-    This works when running directly from the folder containing:
-
-        dashboard.py
-        GUIbasis.toml
-        GUI_result/
+    Expected structure:
+        results_folder/
+            Model/
+                time_series_results.csv
+            Production/
+            Storage/
     """
-    case_file = Path(case_file).expanduser().resolve()
-
-    if not case_file.exists():
-        raise FileNotFoundError(f"TOML case file not found: {case_file}")
-
-    with open(case_file, "rb") as f:
-        cfg = tomllib.load(f)
-
-    try:
-        results_name = cfg["output"]["results_name"]
-    except KeyError as exc:
-        raise KeyError(
-            "TOML file is missing the required output name.\n\n"
-            "Required format:\n"
-            "[output]\n"
-            "results_name = \"GUI_result\"\n\n"
-            f"File checked: {case_file}"
-        ) from exc
-
-    results_name = str(results_name).strip()
-
-    if not results_name:
-        raise ValueError(
-            f"TOML field [output].results_name is blank in: {case_file}"
-        )
-
-    # Correct output rule:
-    #   [output].results_name = "GUI_result"
-    # becomes:
-    #   <folder containing GUIbasis.toml>/GUI_result
-    #
-    # Do NOT add another "projects" folder here. If dashboard.py is already
-    # inside the projects folder, adding "projects" creates:
-    #   <projects folder>/projects/GUI_result
-    results_folder = (case_file.parent / results_name).resolve()
+    results_folder = Path(results_folder).expanduser().resolve()
 
     model_csv = results_folder / "Model" / "time_series_results.csv"
+
     if not model_csv.exists():
         raise FileNotFoundError(
             "Dashboard could not find the PGMcpp output CSV.\n\n"
-            f"TOML case file: {case_file}\n"
-            f"TOML [output].results_name: {results_name}\n"
-            f"Expected results folder: {results_folder}\n"
+            f"Results folder checked: {results_folder}\n"
             f"Expected CSV: {model_csv}"
         )
 
     return results_folder
 
 
-def get_case_file_from_command_line():
+def get_results_folder_from_command_line():
     """
-    Launch form:
-        python dashboard.py GUIbasis.toml
+    Launch forms:
+        python dashboard.py
 
-    If no argument is supplied, GUIbasis.toml beside dashboard.py is used.
-    Direct results folders or raw results names are intentionally not accepted.
+    or:
+        python dashboard.py "C:\\Users\\jracine\\Desktop\\PGMcpp_NEI_version\\projects\\results\\paulatuk_single_case\\growth_08_PATH_02"
     """
     if len(sys.argv) > 2:
-        raise ValueError("Usage: python dashboard.py [case_file.toml]")
+        raise ValueError("Usage: python dashboard.py [results_folder]")
 
     if len(sys.argv) == 2:
-        case_file = Path(sys.argv[1]).expanduser()
+        results_folder = Path(sys.argv[1])
     else:
-        case_file = DEFAULT_CASE_FILE
+        results_folder = DEFAULT_RESULTS_FOLDER
 
-    if case_file.suffix.lower() != ".toml":
-        raise ValueError(
-            "Dashboard input must be a TOML case file, not a results folder/name. "
-            "Use: python dashboard.py GUIbasis.toml"
-        )
-
-    return case_file
+    return validate_results_folder(results_folder)
 
 
-CASE_FILE = get_case_file_from_command_line()
-main_folder_path = str(load_results_folder_from_toml(CASE_FILE))
+main_folder_path = str(get_results_folder_from_command_line())
 
 
 # ============================================================
 # Runtime verification
 # ============================================================
 
-DASHBOARD_VERSION = "PGMCPP_DASHBOARD_TOML_BESIDE_CASE_FILE"
+DASHBOARD_VERSION = "PGMCPP_DASHBOARD_DIRECT_RESULTS_FOLDER"
 
 
 # ============================================================
@@ -1543,7 +1490,7 @@ if __name__ == "__main__":
     print("STARTING DASHBOARD", flush=True)
     print(f"Dashboard version: {DASHBOARD_VERSION}", flush=True)
     print(f"Dashboard Python file: {Path(__file__).resolve()}", flush=True)
-    print(f"TOML case file: {CASE_FILE.resolve()}", flush=True)
+    print(f"Results folder input: {main_folder_path}", flush=True)
     print(f"Results folder: {main_folder_path}", flush=True)
     print(f"Model summary file: {file_path_model_summary}", flush=True)
     print(f"Parsed NPC: {total_net_present_cost}", flush=True)

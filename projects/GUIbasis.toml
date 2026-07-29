@@ -4,19 +4,20 @@
 # ============================================================
 
 [paths]
-pgmcpp_pybindings = "C:/PGMcpp_work/PGMcpp/pybindings"
-electrical_load_time_series = "C:/PGMcpp_work/PGMcpp/data/test/electrical_load/ie0110_kluane_load_1m.csv"
+pgmcpp_pybindings = "../pybindings"
+electrical_load_time_series = "../data/test/electrical_load/paulatuk_load_20yr_growth_3pct_pgmcpp.csv"
 
 [model]
 control_mode = "LOAD_FOLLOWING"
-firm_dispatch_ratio = 0.1
+firm_dispatch_ratio = 0.0
 load_reserve_ratio = 0.1
 
 [economics]
 remote_cost_factor = 3.24
+misc_capital_cost_CAD = 0.0
 
 [output]
-results_name = "GUI_result"
+results_name = "XYZ"
 
 
 # ============================================================
@@ -29,27 +30,9 @@ results_name = "GUI_result"
 [[renewable_resources]]
 enabled = true
 type = "WIND"
-resource_label = "kluane_wind_2019"
+resource_label = "paulatuk_wind_20yr"
 key = 1
-path = "C:/PGMcpp_work/PGMcpp/data/test/resources/ie0110_Wind_2019_1m.csv"
-
-[[renewable_resources]]
-enabled = false
-type = "WIND"
-resource_label = "WIND_2"
-key = 2
-
-[[renewable_resources]]
-enabled = false
-type = "WIND"
-resource_label = "WIND_3"
-key = 3
-
-[[renewable_resources]]
-enabled = false
-type = "SOLAR"
-resource_label = "SOLAR_1"
-key = 4
+path = "../data/test/resources/wind_resource_20yr_pgmcpp_full_year_mps.csv"
 [[diesel_generators]]
 enabled = true
 capacity_kW = 600

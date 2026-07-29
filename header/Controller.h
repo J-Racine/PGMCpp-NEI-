@@ -70,6 +70,7 @@
 enum ControlMode {
     LOAD_FOLLOWING, ///< Load following control, with in-order dispatch of non-Combustion assets and optimal dispatch of Combustion assets.
     CYCLE_CHARGING, ///< Cycle charging control, with in-order dispatch of non-Combustion assets and optimal dispatch of Combustion assets.
+    PSIS, ///< PSIS-style supervisory diesel/BESS control.
     N_CONTROL_MODES ///< A simple hack to get the number of elements in ControlMode
 };
 
@@ -191,6 +192,15 @@ class Controller {
         
         double firm_dispatch_ratio; ///< The ratio [0, 1] of the load in each time step that must be dispatched from firm assets.
         double load_reserve_ratio; ///< The ratio [0, 1] of the load in each time step that must be included in the required spinning reserve.
+
+        bool psis_diesel_mode = false; ///< True while the PSIS supervisory controller commands diesel-on operation.
+        double psis_diesel_on_soc = 0.10; ///< SOC threshold [0, 1] for entering diesel-on mode.
+        double psis_diesel_off_soc = 0.89; ///< SOC threshold [0, 1] required before leaving diesel-on mode.
+        double psis_wind_shutdown_margin_ratio = 0.10; ///< Wind headroom above load [0, 1] required for diesel shutdown.
+        double psis_wind_shutdown_persistence_hrs = 0.25; ///< Continuous wind-qualified time [hrs] required for diesel shutdown.
+        double psis_diesel_on_time_hrs = 0; ///< Elapsed time [hrs] in the current diesel-on period.
+        double psis_wind_sufficient_time_hrs = 0; ///< Continuous time [hrs] for which wind has met the shutdown criterion.
+        std::vector<bool> psis_diesel_mode_vec; ///< Supervisory diesel-mode state at each timestep.
         
         std::vector<bool> storage_discharge_bool_vec; ///< A boolean vector attribute to track which Storage assets have been discharged in each time step.
         
