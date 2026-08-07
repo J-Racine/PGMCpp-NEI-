@@ -1728,7 +1728,7 @@ void Controller :: applyDispatchControl(
         //  3.1. update PSIS supervisory mode before dispatch
         if (this->control_mode == ControlMode :: PSIS) {
             double total_storage_charge_kWh = 0;
-            double total_storage_energy_kWh = 0;
+            double total_storage_current_energy_kWh = 0;
             double total_storage_rated_power_kW = 0;
             double total_storage_available_power_kW = 0;
 
@@ -1740,7 +1740,8 @@ void Controller :: applyDispatchControl(
                 Storage* storage_ptr = storage_ptr_vec_ptr->at(asset);
 
                 total_storage_charge_kWh += storage_ptr->charge_kWh;
-                total_storage_energy_kWh += storage_ptr->energy_capacity_kWh;
+                total_storage_current_energy_kWh +=
+                    storage_ptr->getCurrentEnergyCapacitykWh();
                 total_storage_rated_power_kW +=
                     storage_ptr->power_capacity_kW;
                 total_storage_available_power_kW +=
@@ -1749,9 +1750,18 @@ void Controller :: applyDispatchControl(
 
             double storage_soc = 0;
 
-            if (total_storage_energy_kWh > 0) {
+            if (total_storage_current_energy_kWh > 0) {
                 storage_soc =
-                    total_storage_charge_kWh / total_storage_energy_kWh;
+                    total_storage_charge_kWh /
+                    total_storage_current_energy_kWh;
+            }
+
+            if (storage_soc < 0) {
+                storage_soc = 0;
+            }
+
+            else if (storage_soc > 1) {
+                storage_soc = 1;
             }
 
             // Keep the installed-power test separate from the instantaneous

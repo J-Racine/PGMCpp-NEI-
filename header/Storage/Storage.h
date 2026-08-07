@@ -155,6 +155,9 @@ class Storage {
         
         virtual double getAvailablekW(double) {return 0;}
         virtual double getAcceptablekW(double) {return 0;}
+        virtual double getCurrentEnergyCapacitykWh(void) {
+            return this->energy_capacity_kWh;
+        }
         
         virtual void commitCharge(int, double, double) {return;}
         virtual double commitDischarge(int, double, double, double) {return 0;}

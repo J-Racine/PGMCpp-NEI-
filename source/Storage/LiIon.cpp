@@ -322,11 +322,10 @@ double LiIon :: __getGenericOpMaintCost(void)
 void LiIon :: __toggleDepleted(void)
 {
     if (this->is_depleted) {
-        double hysteresis_charge_kWh = this->hysteresis_SOC * this->energy_capacity_kWh;
-    
-        if (hysteresis_charge_kWh > this->dynamic_energy_capacity_kWh) {
-            hysteresis_charge_kWh = this->dynamic_energy_capacity_kWh;
-        }
+        // SOC limits are fractions of the battery's present usable energy
+        // capacity, not its beginning-of-life nameplate capacity.
+        double hysteresis_charge_kWh =
+            this->hysteresis_SOC * this->dynamic_energy_capacity_kWh;
         
         if (this->charge_kWh >= hysteresis_charge_kWh) {
             this->is_depleted = false;
@@ -334,7 +333,8 @@ void LiIon :: __toggleDepleted(void)
     }
     
     else {
-        double min_charge_kWh = this->min_SOC * this->energy_capacity_kWh;
+        double min_charge_kWh =
+            this->min_SOC * this->dynamic_energy_capacity_kWh;
         
         if (this->charge_kWh <= min_charge_kWh) {
             this->is_depleted = true;
@@ -410,8 +410,21 @@ void LiIon :: __handleDegradation(
 
 void LiIon :: __modelDegradation(double dt_hrs, double charging_discharging_kW)
 {
-    //  1. compute SOC
-    double SOC = this->charge_kWh / this->energy_capacity_kWh;
+    //  1. compute SOC relative to present usable capacity. SOH remains the
+    //     ratio of present usable capacity to beginning-of-life capacity.
+    double SOC = 0;
+
+    if (this->dynamic_energy_capacity_kWh > 0) {
+        SOC = this->charge_kWh / this->dynamic_energy_capacity_kWh;
+    }
+
+    if (SOC < 0) {
+        SOC = 0;
+    }
+
+    else if (SOC > 1) {
+        SOC = 1;
+    }
     
     //  2. compute C-rate and corresponding acceleration factor
     double C_rate = charging_discharging_kW / this->power_capacity_kW;
@@ -813,6 +826,25 @@ void LiIon :: handleReplacement(int timestep)
 // ---------------------------------------------------------------------------------- //
 
 ///
+/// \fn double LiIon :: getCurrentEnergyCapacitykWh(void)
+///
+/// \brief Method to get the present energy capacity after SOH degradation.
+///
+/// \return The present usable energy capacity [kWh].
+///
+
+double LiIon :: getCurrentEnergyCapacitykWh(void)
+{
+    return this->dynamic_energy_capacity_kWh;
+}   /* getCurrentEnergyCapacitykWh() */
+
+// ---------------------------------------------------------------------------------- //
+
+
+
+// ---------------------------------------------------------------------------------- //
+
+///
 /// \fn double LiIon :: getAvailablekW(double dt_hrs)
 ///
 /// \brief Method to get the discharge power currently available from the asset.
@@ -824,8 +856,9 @@ void LiIon :: handleReplacement(int timestep)
 
 double LiIon :: getAvailablekW(double dt_hrs)
 {
-    //  1. get min charge
-    double min_charge_kWh = this->min_SOC * this->energy_capacity_kWh;
+    //  1. get minimum charge from the present usable energy capacity
+    double min_charge_kWh =
+        this->min_SOC * this->dynamic_energy_capacity_kWh;
     
     //  2. compute available power
     double available_kW =
@@ -865,12 +898,9 @@ double LiIon :: getAvailablekW(double dt_hrs)
 
 double LiIon :: getAcceptablekW(double dt_hrs)
 {
-    //  1. get max charge
-    double max_charge_kWh = this->max_SOC * this->energy_capacity_kWh;
-    
-    if (max_charge_kWh > this->dynamic_energy_capacity_kWh) {
-        max_charge_kWh = this->dynamic_energy_capacity_kWh;
-    }
+    //  1. get maximum charge from the present usable energy capacity
+    double max_charge_kWh =
+        this->max_SOC * this->dynamic_energy_capacity_kWh;
     
     //  2. compute acceptable power
     double acceptable_kW = 

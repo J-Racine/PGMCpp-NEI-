@@ -194,8 +194,8 @@ class Controller {
         double load_reserve_ratio; ///< The ratio [0, 1] of the load in each time step that must be included in the required spinning reserve.
 
         bool psis_diesel_mode = false; ///< True while the PSIS supervisory controller commands diesel-on operation.
-        double psis_diesel_on_soc = 0.10; ///< SOC threshold [0, 1] for entering diesel-on mode.
-        double psis_diesel_off_soc = 0.89; ///< SOC threshold [0, 1] required before leaving diesel-on mode.
+        double psis_diesel_on_soc = 0.10; ///< SOC threshold [0, 1] for entering diesel-on mode, evaluated against present usable storage energy capacity.
+        double psis_diesel_off_soc = 0.89; ///< SOC threshold [0, 1] required before leaving diesel-on mode, evaluated against present usable storage energy capacity.
         double psis_wind_shutdown_margin_ratio = 0.10; ///< Wind headroom above load [0, 1] required for diesel shutdown.
         double psis_wind_shutdown_persistence_hrs = 0.25; ///< Continuous wind-qualified time [hrs] required for diesel shutdown.
         double psis_diesel_on_time_hrs = 0; ///< Elapsed time [hrs] in the current diesel-on period.

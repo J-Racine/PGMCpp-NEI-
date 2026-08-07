@@ -27,7 +27,7 @@ WIND_PRODUCTION_CSV = (
 OUTPUT_LOCATION = str(
     PROJECTS_DIR / "results" / "paulatuk_single_case"
 )
-OUTPUT_NAME = "paulatuk_year_test"
+OUTPUT_NAME = "paulatuk comp og"
 
 
 # =============================================================================
@@ -91,7 +91,7 @@ import PGMcpp
 
 model_inputs = PGMcpp.ModelInputs()
 model_inputs.path_2_electrical_load_time_series = ELECTRICAL_LOAD_CSV
-model_inputs.control_mode = PGMcpp.ControlMode.PSIS
+model_inputs.control_mode = PGMcpp.ControlMode.LOAD_FOLLOWING
 model_inputs.firm_dispatch_ratio = FIRM_DISPATCH_RATIO
 model_inputs.load_reserve_ratio = LOAD_RESERVE_RATIO
 

@@ -79,7 +79,7 @@ struct LiIonInputs {
     
     double degradation_alpha = 8.935; ///< A dimensionless acceleration coefficient used in modelling energy capacity degradation.
     double degradation_beta = 1; ///< A dimensionless acceleration exponent used in modelling energy capacity degradation.
-    double degradation_B_hat_cal_0 = 5.22226e6; ///< A reference (or base) pre-exponential factor [1/sqrt(hrs)] used in modelling energy capacity degradation.
+    double degradation_B_hat_cal_0 = 2.82233e6; ///< NEI Paulatuk calibration of the degradation pre-exponential factor [1/sqrt(hrs)]. The original PGMcpp default is 5.22226e6; this first-order calibration targets approximately 80% SOH after 10 years under the Paulatuk duty cycle and must be verified by rerunning the case.
     double degradation_r_cal = 0.4361; ///< A dimensionless constant used in modelling energy capacity degradation.
     double degradation_Ea_cal_0 = 5.279e4; ///< A reference (or base) activation energy [J/mol] used in modelling energy capacity degradation.
     double degradation_a_cal = 100; ///< A pre-exponential factor [J/mol] used in modelling energy capacity degradation.
@@ -158,6 +158,7 @@ class LiIon : public Storage {
         
         double getAvailablekW(double);
         double getAcceptablekW(double);
+        double getCurrentEnergyCapacitykWh(void) override;
         
         void commitCharge(int, double, double);
         double commitDischarge(int, double, double, double);
