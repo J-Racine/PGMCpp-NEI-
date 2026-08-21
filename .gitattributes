@@ -4,3 +4,4 @@ data/test/electrical_load/paulatuk_load_20yr_growth_8pct_pgmcpp.csv filter=lfs d
 data/test/resources/wind_resource_20yr_pgmcpp_full_year_mps.csv filter=lfs diff=lfs merge=lfs -text
 data/test/electrical_load/paulatuk_feeder_load_20yr_nonlinear_pgmcpp[[:space:]]copy.csv filter=lfs diff=lfs merge=lfs -text
 data/test/normalized_production/ie0124_paulatuk_wind_normalized_20yr_1min.csv filter=lfs diff=lfs merge=lfs -text
+data/test/resources/solar_resource_20yr_pgmcpp_full_year_mps.csv filter=lfs diff=lfs merge=lfs -text

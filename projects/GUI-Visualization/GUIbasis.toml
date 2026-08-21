@@ -1,0 +1,109 @@
+# ============================================================
+# PGMcpp GUIbasis.toml
+# CAD-only, categorized asset input file.
+#
+# Jonathan Racine, Northern Energy Innovation
+# email:  jracine@yukonu.ca
+# Last edited: 2026-08-18.
+# ============================================================
+
+
+# Text must remain inside quotation marks. Numbers and true/false values do not
+# use quotation marks. A section beginning with [[...]] can appear more than
+# once; each occurrence describes one separate physical asset.
+#
+# Relative paths are measured from this file's folder. Before running, confirm
+# that every enabled asset has the intended capacity, resource, cost, and units.
+
+[paths]
+# Folder containing the compiled PGMcpp Python interface.
+pgmcpp_pybindings = "../pybindings"
+# Community demand time series. It defines the model timestep and duration.
+electrical_load_time_series = "../data/test/electrical_load/paulatuk_load_20yr_growth_3pct_pgmcpp.csv"
+
+[model]
+# Controller choices supported by the runner include LOAD_FOLLOWING and PSIS.
+control_mode = "LOAD_FOLLOWING"
+# Required fractions are unitless: 0.1 means 10%.
+firm_dispatch_ratio = 0.0
+load_reserve_ratio = 0.1
+
+[economics]
+# Multiplier for remote construction/logistics costs when a row uses it.
+remote_cost_factor = 3.24
+# One additional lump-sum project cost not represented by an asset row.
+misc_capital_cost_CAD = 0.0
+
+[output]
+# PGMcpp creates the results folder using this name.
+results_name = "XYZ"
+
+
+# ============================================================
+# Resource time series
+# ------------------------------------------------------------
+# type options: WIND, SOLAR, TIDAL, WAVE, HYDRO
+# key and resource_key are auto-assigned by gui_toml_editor.py.
+# ============================================================
+
+[[renewable_resources]]
+enabled = true
+type = "WIND"
+# Human-readable name shown in the editor.
+resource_label = "paulatuk_wind_20yr"
+# Numeric connection used internally by PGMcpp.
+key = 1
+path = "../data/test/resources/wind_resource_20yr_pgmcpp_full_year_mps.csv"
+
+# Existing diesel generator. is_sunk = true means its original purchase cost is
+# not charged again as new project CAPEX.
+[[diesel_generators]]
+enabled = true
+capacity_kW = 600
+is_sunk = true
+fuel_cost_CAD_per_L = 2.699
+
+[[diesel_generators]]
+enabled = true
+capacity_kW = 400
+is_sunk = true
+fuel_cost_CAD_per_L = 2.699
+
+[[diesel_generators]]
+enabled = true
+capacity_kW = 310
+is_sunk = true
+fuel_cost_CAD_per_L = 2.699
+[[wind_assets]]
+enabled = true
+capacity_kW = 900
+# Must match the renewable resource intended for this wind asset.
+resource_label = "kluane_wind_2019"
+resource_key = 1
+is_sunk = false
+# CAD_PER_UNIT multiplies cost_value_CAD by installed capacity and the remote factor.
+cost_mode = "CAD_PER_UNIT"
+cost_value_CAD = 3135.9234
+remote_cost_factor = 3.24
+# 0.5 means PGMcpp treats 50% of the relevant output as firm.
+firmness_factor = 0.5
+design_speed_ms = 14
+power_model = "CUBIC"
+
+[[liion_batteries]]
+enabled = true
+# Power capacity controls charge/discharge rate; energy capacity controls duration.
+power_capacity_kW = 450
+energy_capacity_kWh = 670
+is_sunk = false
+cost_mode = "CAD_PER_UNIT"
+cost_value_CAD = 2598.90246
+capital_cost_basis = "kWh"
+remote_cost_factor = 3.24
+# SOC values are fractions: 0.5 means 50% state of charge.
+init_SOC = 0.5
+min_SOC = 0.15
+hysteresis_SOC = 0.5
+max_SOC = 0.9
+charging_efficiency = 0.9
+discharging_efficiency = 0.9
